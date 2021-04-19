@@ -5,3 +5,9 @@
 
 # Output
 /xenvkbd
+/.build_number
+/include/version.h
+x64/
+Win32/
+vs2019/xenvkbd.inf
+vs2019/version/.revision
