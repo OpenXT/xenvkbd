@@ -1,4 +1,5 @@
-/* Copyright (c) Citrix Systems Inc.
+/* Copyright (c) Xen Project.
+ * Copyright (c) Cloud Software Group, Inc.
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, 
@@ -424,7 +425,8 @@ RingDpc(
     XENBUS_EVTCHN(Unmask,
                   &Ring->EvtchnInterface,
                   Ring->Channel,
-                  FALSE);
+                  FALSE,
+                  TRUE);
 
 done:
     RingReleaseLock(Ring);
@@ -604,6 +606,7 @@ RingConnect(
                            &Ring->GnttabInterface,
                            "VKBD_Ring_Gnttab",
                            0,
+                           0,
                            RingAcquireLock,
                            RingReleaseLock,
                            Ring,
@@ -660,7 +663,8 @@ RingConnect(
     XENBUS_EVTCHN(Unmask,
                   &Ring->EvtchnInterface,
                   Ring->Channel,
-                  FALSE);
+                  FALSE,
+                  TRUE);
 
     status = XENBUS_DEBUG(Register,
                           &Ring->DebugInterface,
