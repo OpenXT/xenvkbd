@@ -1,4 +1,5 @@
-/* Copyright (c) Citrix Systems Inc.
+/* Copyright (c) Xen Project.
+ * Copyright (c) Cloud Software Group, Inc.
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, 
@@ -39,7 +40,6 @@
 #include <xen.h>
 
 #include <suspend_interface.h>
-#include <unplug_interface.h>
 #include <debug_interface.h>
 
 #include "names.h"
@@ -78,9 +78,6 @@ struct _XENVKBD_PDO {
 
     XENBUS_SUSPEND_INTERFACE    SuspendInterface;
     PXENBUS_SUSPEND_CALLBACK    SuspendCallbackLate;
-
-    XENBUS_UNPLUG_INTERFACE     UnplugInterface;
-    BOOLEAN                     UnplugRequested;
 
     PXENVKBD_FRONTEND           Frontend;
 
@@ -911,7 +908,7 @@ PdoQueryDeviceRelations(
     if (StackLocation->Parameters.QueryDeviceRelations.Type != TargetDeviceRelation)
         goto done;
 
-    Relations = ExAllocatePoolWithTag(PagedPool, sizeof (DEVICE_RELATIONS), 'FIV');
+    Relations = __AllocatePoolWithTag(PagedPool, sizeof (DEVICE_RELATIONS), 'FIV');
 
     status = STATUS_NO_MEMORY;
     if (Relations == NULL)
@@ -1163,7 +1160,7 @@ PdoQueryDeviceText(
         goto done;
     }
 
-    Buffer = ExAllocatePoolWithTag(PagedPool, MAXTEXTLEN, 'FIV');
+    Buffer = __AllocatePoolWithTag(PagedPool, MAXTEXTLEN, 'FIV');
 
     status = STATUS_NO_MEMORY;
     if (Buffer == NULL)
@@ -1291,7 +1288,7 @@ PdoQueryId(
         goto done;
     }
 
-    Buffer = ExAllocatePoolWithTag(PagedPool, Id.MaximumLength, 'FIV');
+    Buffer = __AllocatePoolWithTag(PagedPool, Id.MaximumLength, 'FIV');
 
     status = STATUS_NO_MEMORY;
     if (Buffer == NULL)
@@ -1317,18 +1314,11 @@ PdoQueryId(
         break;
 
     case BusQueryDeviceID: {
-        ULONG                   Index;
-        PXENVKBD_PDO_REVISION    Revision;
-
         Type = REG_SZ;
-        Index = ARRAYSIZE(PdoRevision) - 1;
-        Revision = &PdoRevision[Index];
 
         status = RtlStringCbPrintfW(Buffer,
                                     Id.MaximumLength,
-                                    L"XENVKBD\\VEN_%hs&DEV_HID&REV_%08X",
-                                    __PdoGetVendorName(Pdo),
-                                    Revision->Number);
+                                    L"XENVKBD\\VEN_" VENDOR_PREFIX_STR "&DEV_HID");
         ASSERT(NT_SUCCESS(status));
 
         Buffer += wcslen(Buffer);
@@ -1355,11 +1345,11 @@ PdoQueryId(
                                         Revision->Number);
             ASSERT(NT_SUCCESS(status));
 
-            Buffer += wcslen(Buffer);
             Length -= (ULONG)(wcslen(Buffer) * sizeof (WCHAR));
+            Buffer += wcslen(Buffer);
 
-            Buffer++;
             Length -= sizeof (WCHAR);
+            Buffer++;
 
             --Index;
         }
@@ -1427,7 +1417,7 @@ PdoQueryBusInformation(
 
     UNREFERENCED_PARAMETER(Pdo);
 
-    Info = ExAllocatePoolWithTag(PagedPool, sizeof (PNP_BUS_INFORMATION), 'FIV');
+    Info = __AllocatePoolWithTag(PagedPool, sizeof (PNP_BUS_INFORMATION), 'FIV');
 
     status = STATUS_NO_MEMORY;
     if (Info == NULL)
@@ -2018,7 +2008,6 @@ PdoCreate(
         goto fail7;
 
     FdoGetSuspendInterface(Fdo, &Pdo->SuspendInterface);
-    FdoGetUnplugInterface(Fdo, &Pdo->UnplugInterface);
 
     Dx->Pdo = Pdo;
 
@@ -2050,9 +2039,6 @@ fail8:
     (VOID) __PdoClearEjectRequested(Pdo);
 
     Dx->Pdo = NULL;
-
-    RtlZeroMemory(&Pdo->UnplugInterface,
-                  sizeof (XENBUS_UNPLUG_INTERFACE));
 
     RtlZeroMemory(&Pdo->SuspendInterface,
                   sizeof (XENBUS_SUSPEND_INTERFACE));
@@ -2114,8 +2100,6 @@ PdoDestroy(
     PDEVICE_OBJECT      PhysicalDeviceObject = Dx->DeviceObject;
     PXENVKBD_FDO        Fdo = __PdoGetFdo(Pdo);
 
-    Pdo->UnplugRequested = FALSE;
-
     ASSERT3U(__PdoGetDevicePnpState(Pdo), ==, Deleted);
 
     ASSERT(__PdoIsMissing(Pdo));
@@ -2133,9 +2117,6 @@ PdoDestroy(
     (VOID) __PdoClearEjectRequested(Pdo);
 
     Dx->Pdo = NULL;
-
-    RtlZeroMemory(&Pdo->UnplugInterface,
-                  sizeof (XENBUS_UNPLUG_INTERFACE));
 
     RtlZeroMemory(&Pdo->SuspendInterface,
                   sizeof (XENBUS_SUSPEND_INTERFACE));

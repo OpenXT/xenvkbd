@@ -1,4 +1,5 @@
-/* Copyright (c) Citrix Systems Inc.
+/* Copyright (c) Xen Project.
+ * Copyright (c) Cloud Software Group, Inc.
  * All rights reserved.
  * 
  * Redistribution and use in source and binary forms, 
@@ -41,7 +42,6 @@
 #include <store_interface.h>
 #include <gnttab_interface.h>
 #include <suspend_interface.h>
-#include <unplug_interface.h>
 #include <version.h>
 
 #include "driver.h"
@@ -102,7 +102,6 @@ struct _XENVKBD_FDO {
     XENBUS_RANGE_SET_INTERFACE  RangeSetInterface;
     XENBUS_CACHE_INTERFACE      CacheInterface;
     XENBUS_GNTTAB_INTERFACE     GnttabInterface;
-    XENBUS_UNPLUG_INTERFACE     UnplugInterface;
 
     PXENBUS_SUSPEND_CALLBACK    SuspendCallbackLate;
 };
@@ -757,18 +756,20 @@ __FdoEnumerate(
             Name = PdoGetName(Pdo);
             Missing = TRUE;
 
-            // If the PDO already exists and its name is in the device list
-            // then we don't want to remove it.
-            for (Index = 0; Devices[Index].Buffer != NULL; Index++) {
-                PANSI_STRING Device = &Devices[Index];
+            if (Devices != NULL) {
+                // If the PDO already exists and its name is in the device list
+                // then we don't want to remove it.
+                for (Index = 0; Devices[Index].Buffer != NULL; Index++) {
+                    PANSI_STRING Device = &Devices[Index];
 
-                if (Device->Length == 0)
-                    continue;
+                    if (Device->Length == 0)
+                        continue;
 
-                if (strcmp(Name, Device->Buffer) == 0) {
-                    Missing = FALSE;
-                    Device->Length = 0;  // avoid duplication
-                    break;
+                    if (strcmp(Name, Device->Buffer) == 0) {
+                        Missing = FALSE;
+                        Device->Length = 0;  // avoid duplication
+                        break;
+                    }
                 }
             }
 
@@ -796,15 +797,17 @@ __FdoEnumerate(
     }
 
     // Walk the class list and create PDOs for any new device
-    for (Index = 0; Devices[Index].Buffer != NULL; Index++) {
-        PANSI_STRING Device = &Devices[Index];
+    if (Devices != NULL) {
+        for (Index = 0; Devices[Index].Buffer != NULL; Index++) {
+            PANSI_STRING Device = &Devices[Index];
 
-        if (Device->Length == 0)
-            continue;
+            if (Device->Length == 0)
+                continue;
 
-        status = PdoCreate(Fdo, Device);
-        if (NT_SUCCESS(status))
-            NeedInvalidate = TRUE;
+            status = PdoCreate(Fdo, Device);
+            if (NT_SUCCESS(status))
+                NeedInvalidate = TRUE;
+        }
     }
 
     __FdoReleaseMutex(Fdo);
@@ -951,8 +954,12 @@ FdoScan(
             Devices = NULL;
         }
 
-        if (Devices == NULL)
-            goto loop;
+        if (Devices == NULL) {
+            if (status == STATUS_OBJECT_PATH_NOT_FOUND)
+                goto invalidate;
+            else
+                goto loop;
+        }
 
         if (ParametersKey != NULL) {
             status = RegistryQuerySzValue(ParametersKey,
@@ -992,9 +999,11 @@ FdoScan(
         if (UnsupportedDevices != NULL)
             RegistryFreeSzValue(UnsupportedDevices);
 
+invalidate:
         NeedInvalidate = __FdoEnumerate(Fdo, Devices);
 
-        __FdoFreeAnsi(Devices);
+        if (Devices != NULL)
+            __FdoFreeAnsi(Devices);
 
         if (NeedInvalidate) {
             NeedInvalidate = FALSE;
@@ -1853,7 +1862,7 @@ FdoQueryDeviceRelations(
 
     Size = FIELD_OFFSET(DEVICE_RELATIONS, Objects) + (sizeof (PDEVICE_OBJECT) * __max(Count, 1));
 
-    Relations = ExAllocatePoolWithTag(PagedPool, Size, 'FIV');
+    Relations = __AllocatePoolWithTag(PagedPool, Size, 'FIV');
 
     status = STATUS_NO_MEMORY;
     if (Relations == NULL)
@@ -2994,7 +3003,6 @@ DEFINE_FDO_GET_INTERFACE(Store, PXENBUS_STORE_INTERFACE)
 DEFINE_FDO_GET_INTERFACE(RangeSet, PXENBUS_RANGE_SET_INTERFACE)
 DEFINE_FDO_GET_INTERFACE(Cache, PXENBUS_CACHE_INTERFACE)
 DEFINE_FDO_GET_INTERFACE(Gnttab, PXENBUS_GNTTAB_INTERFACE)
-DEFINE_FDO_GET_INTERFACE(Unplug, PXENBUS_UNPLUG_INTERFACE)
 
 NTSTATUS
 FdoCreate(
@@ -3124,15 +3132,6 @@ FdoCreate(
     if (!NT_SUCCESS(status))
         goto fail13;
 
-    status = FDO_QUERY_INTERFACE(Fdo,
-                                 XENBUS,
-                                 UNPLUG,
-                                 (PINTERFACE)&Fdo->UnplugInterface,
-                                 sizeof (Fdo->UnplugInterface),
-                                 FALSE);
-    if (!NT_SUCCESS(status))
-        goto fail14;
-
     Dx->Fdo = Fdo;
 
     InitializeMutex(&Fdo->Mutex);
@@ -3145,12 +3144,6 @@ FdoCreate(
 
     FunctionDeviceObject->Flags &= ~DO_DEVICE_INITIALIZING;
     return STATUS_SUCCESS;
-
-fail14:
-    Error("fail14\n");
-
-    RtlZeroMemory(&Fdo->UnplugInterface,
-                  sizeof (XENBUS_UNPLUG_INTERFACE));
 
 fail13:
     Error("fail13\n");
@@ -3257,9 +3250,6 @@ FdoDestroy(
     RtlZeroMemory(&Fdo->Mutex, sizeof (MUTEX));
 
     Dx->Fdo = NULL;
-
-    RtlZeroMemory(&Fdo->UnplugInterface,
-                  sizeof (XENBUS_UNPLUG_INTERFACE));
 
     RtlZeroMemory(&Fdo->GnttabInterface,
                   sizeof (XENBUS_GNTTAB_INTERFACE));
